@@ -1,0 +1,9 @@
+text=auto
+
+Enforce LF on scripts/code in mixed Windows envs
+
+*.sh eol=lf *.py eol=lf Dockerfile eol=lf *.yml eol=lf *.yaml eol=lf *.md eol=lf
+
+Git LFS for ML/binary artifacts you may add later
+
+*.tflite filter=lfs diff=lfs merge=lfs -text *.onnx filter=lfs diff=lfs merge=lfs -text *.pt filter=lfs diff=lfs merge=lfs -text *.bin filter=lfs diff=lfs merge=lfs -text *.zip filter=lfs diff=lfs merge=lfs -text

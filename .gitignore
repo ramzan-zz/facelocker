@@ -1,0 +1,39 @@
+---- OS / IDE ----
+
+.DS_Store Thumbs.db .vscode/ .idea/ *.code-workspace
+
+---- Python / FastAPI ----
+
+pycache/ *.py[cod] .so .mypy_cache/ .pytest_cache/ .coverage .pyre/ .eggs/ .egg-info/ .env .env. .venv/ venv/ ENV/ backend/app/pycache/ backend/.pytest_cache/
+
+---- Flutter (mobile_tablet + admin_web) ----
+
+.dart_tool/ .packages .pub-cache/ .flutter-plugins .flutter-plugins-dependencies build/
+
+Android
+
+android/.gradle/ android/local.properties android/app/release/ android/app/debug/ *.keystore *.jks
+
+iOS/macOS
+
+ios/Flutter/Flutter.framework ios/Flutter/Flutter.podspec ios/Pods/ macos/Pods/
+
+---- PlatformIO (ESP) ----
+
+.pio/ .pioenvs/ .ccls-cache/ .clangd/
+
+---- Docker/Infra ----
+
+infra/backend/pycache/ infra/mosquitto/*.log infra/mosquitto/data/
+
+---- Certificates / secrets (keep out of git) ----
+
+certs/ *.crt *.key *.pem *.p12
+
+---- Logs / temp ----
+
+*.log *.tmp *.swp
+
+---- Node (if any tooling appears later) ----
+
+node_modules/
