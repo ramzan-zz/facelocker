@@ -1,39 +1,44 @@
-version: "3.9"
 services:
-mosquitto:
-image: eclipse-mosquitto:2
-container_name: facelocker-mosquitto
-restart: unless-stopped
-ports:
-- "1883:1883"
-# - "8883:8883" # enable if you add TLS
+  mosquitto:
+    image: eclipse-mosquitto:2
+    container_name: facelocker-mosquitto
+    restart: unless-stopped
+    ports:
+      - "1883:1883" # enable 8883 later when you add TLS
+    volumes:
+      - ./mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      - mosq-data:/mosquitto/data
+      - mosq-log:/mosquitto/log
+
+  backend:
+    build:
+      context: ../
+      dockerfile: infra/backend/Dockerfile
+    container_name: facelocker-backend
+    restart: unless-stopped
+    env_file: ../.env
+    environment:
+      - BACKEND_DB_URL=${BACKEND_DB_URL}
+      - MQTT_HOST=mosquitto
+      - MQTT_PORT=1883
+      - MQTT_USE_TLS=false
+      - DB_PATH=/app/data/facelocker.db
+      - FACE_PACK=buffalo_sc
+      - FACE_PROVIDER=CPU
+      - FACE_COS_THRESHOLD=0.75
+      - FACE_MODELS_DIR=/app/models # ⬅️ add this
+      - NO_ALBUMENTATIONS_UPDATE=1 # optional: silence that warning
+      # - FACE_MODELS_DIR=/app/models  # if you mount models for offline
+    ports:
+      - "8000:8000"
+    volumes:
+      - ../backend:/app/backend
+      - ./data:/app/data
+      - ./models:/app/models
+    depends_on:
+      - mosquitto
+
 volumes:
-- ./mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
-- mosq-data:/mosquitto/data
-- mosq-log:/mosquitto/log
-
-
-backend:
-build:
-context: ../
-dockerfile: infra/backend/Dockerfile
-container_name: facelocker-backend
-env_file: ../.env
-environment:
-- BACKEND_DB_URL=${BACKEND_DB_URL}
-- MQTT_HOST=mosquitto
-- MQTT_PORT=1883
-- MQTT_USE_TLS=false
-ports:
-- "8000:8000"
-volumes:
-- ../backend:/app/backend
-- backend-data:/app/data
-depends_on:
-- mosquitto
-
-
-volumes:
-mosq-data:
-mosq-log:
-backend-data:
+  mosq-data:
+  mosq-log:
+  backend-data:

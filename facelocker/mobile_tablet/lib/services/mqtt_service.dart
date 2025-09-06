@@ -8,21 +8,19 @@ class MqttService {
   final String siteId;
   late MqttServerClient _client;
   MqttService({required this.host, this.port = 1883, required this.siteId}) {
-    _client =
-        MqttServerClient(
-            host,
-            'tablet-${DateTime.now().millisecondsSinceEpoch}',
-          )
-          ..port = port
-          ..logging(on: false)
-          ..keepAlivePeriod = 20;
+    _client = MqttServerClient(
+      host,
+      'tablet-${DateTime.now().millisecondsSinceEpoch}',
+    )
+      ..port = port
+      ..logging(on: false)
+      ..keepAlivePeriod = 20;
   }
 
   Future<void> connect({String? username, String? password}) async {
-    _client.connectionMessage =
-        MqttConnectMessage()
-            .withClientIdentifier(_client.clientIdentifier!)
-            .startClean();
+    _client.connectionMessage = MqttConnectMessage()
+        .withClientIdentifier(_client.clientIdentifier!)
+        .startClean();
     await _client.connect(username, password);
   }
 

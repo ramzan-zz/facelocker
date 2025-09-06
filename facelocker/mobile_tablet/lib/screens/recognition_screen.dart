@@ -1,8 +1,9 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../app_state.dart';
 import '../services/mqtt_service.dart';
 import '../services/recognizer.dart';
+import '../config.dart';
 
 class RecognitionScreen extends StatefulWidget {
   const RecognitionScreen({super.key});
@@ -25,7 +26,7 @@ class _RecognitionScreenState extends State<RecognitionScreen> {
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Text(
+              const Text(
                 'FaceLocker',
                 style: TextStyle(
                   color: Colors.white,
@@ -35,21 +36,26 @@ class _RecognitionScreenState extends State<RecognitionScreen> {
               ),
               const SizedBox(height: 16),
               ElevatedButton(
-                onPressed:
-                    busy
-                        ? null
-                        : () async {
-                          setState(() => busy = true);
-                          final result = await rec.identifyFromCameraFrame();
-                          if (result != null) {
-                            final (userId, conf, live) = result;
-                            final lockerId = app.assignment[userId];
-                            if (lockerId != null) {
+                onPressed: busy
+                    ? null
+                    : () async {
+                        setState(() => busy = true);
+                        final result = await rec.identifyFromCameraFrame();
+                        if (!mounted) return;
+
+                        if (result != null) {
+                          final (userId, conf, live) = result;
+                          final lockerId = app.assignment[userId];
+                          if (lockerId != null) {
+                            try {
                               final mqtt = MqttService(
-                                host: '10.0.2.2',
-                                siteId: app.siteId,
-                              ); // change IP
+                                host: kMqttHost,
+                                port: kMqttPort,
+                                siteId: kSiteId,
+                              );
                               await mqtt.connect();
+                              if (!mounted) return;
+
                               mqtt.publishUnlock(
                                 userId: userId,
                                 lockerId: lockerId,
@@ -57,23 +63,25 @@ class _RecognitionScreenState extends State<RecognitionScreen> {
                                 confidence: conf,
                                 liveness: live,
                               );
+
+                              setState(() => lastMsg =
+                                  'Welcome $userId -> Locker $lockerId unlocked');
+                            } catch (e) {
+                              if (!mounted) return;
                               setState(
-                                () =>
-                                    lastMsg =
-                                        'Welcome $userId → Locker $lockerId unlocked',
-                              );
-                            } else {
-                              setState(
-                                () =>
-                                    lastMsg = 'No locker assigned for $userId',
-                              );
+                                  () => lastMsg = 'Failed to send unlock: $e');
                             }
                           } else {
-                            setState(() => lastMsg = 'No match');
+                            setState(() =>
+                                lastMsg = 'No locker assigned for $userId');
                           }
-                          setState(() => busy = false);
-                        },
-                child: Text(busy ? 'Scanning…' : 'Scan & Unlock'),
+                        } else {
+                          setState(() => lastMsg = 'No match');
+                        }
+                        if (!mounted) return;
+                        setState(() => busy = false);
+                      },
+                child: Text(busy ? 'Scanning...' : 'Scan & Unlock'),
               ),
               if (lastMsg != null)
                 Padding(

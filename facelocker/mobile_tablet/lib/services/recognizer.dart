@@ -3,8 +3,8 @@ import 'dart:math';
 class Recognizer {
   // TODO: load TFLite model and provide embedding() + cosine search
   Future<(String, double, double)?> identifyFromCameraFrame(
-    /* CameraImage frame */
-  ) async {
+      /* CameraImage frame */
+      ) async {
     // TEMP: return a fake user for prototyping
     await Future.delayed(const Duration(milliseconds: 200));
     final conf = 0.88 + Random().nextDouble() * 0.04;
