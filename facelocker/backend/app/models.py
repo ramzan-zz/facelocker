@@ -1,6 +1,15 @@
 ﻿# backend/app/models.py
 from datetime import datetime
-from sqlalchemy import Column, Integer, String, DateTime, Text, Float, ForeignKey
+from sqlalchemy import (
+    Column,
+    Integer,
+    String,
+    DateTime,
+    Text,
+    Float,
+    ForeignKey,
+    Boolean,
+)
 from sqlalchemy.orm import relationship
 from .db import Base
 
@@ -39,6 +48,7 @@ class Assignment(Base):
     __tablename__ = "assignments"
 
     id = Column(Integer, primary_key=True, index=True)
+
     # Link a user to a locker by public IDs
     user_id = Column(
         String,
@@ -52,6 +62,10 @@ class Assignment(Base):
         index=True,
         nullable=False,
     )
+
+    # NEW: mark the “current” assignment and allow easy ordering
+    active = Column(Boolean, default=True, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
 
 class Embedding(Base):

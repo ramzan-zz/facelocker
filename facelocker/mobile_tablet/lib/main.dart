@@ -1,39 +1,61 @@
 // lib/main.dart
 import 'package:flutter/material.dart';
-import 'package:provider/provider.dart';
-import 'config.dart';
-import 'screens/recognize_and_unlock.dart';
 
-// OPTIONAL: if you have AppState hydration elsewhere, you can add it back.
-// For now, we keep main lean and go straight to the screen.
+import 'config.dart';
+import 'screens/home_screen.dart';
+import 'screens/recognize_and_unlock.dart';
+import 'screens/enroll_screen.dart'; // ← single enroll screen
+import 'screens/user_management_screen.dart'; // <-- add this import
+
 void main() {
-  runApp(const MyApp());
+  WidgetsFlutterBinding.ensureInitialized();
+  runApp(const FaceLockerApp());
 }
 
-class MyApp extends StatelessWidget {
-  const MyApp({super.key});
+class FaceLockerApp extends StatelessWidget {
+  const FaceLockerApp({super.key});
+
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
       title: 'FaceLocker',
-      theme: ThemeData(useMaterial3: true),
-      home: const _Home(),
       debugShowCheckedModeBanner: false,
-    );
-  }
-}
+      theme: ThemeData(
+        useMaterial3: true,
+        colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF1F6FEB)),
+      ),
+      home: const HomeScreen(),
+      routes: {
+        // Unlock
+        RecognizeAndUnlockScreen.route: (_) => RecognizeAndUnlockScreen(
+              backendBase: kBackendBase,
+              mqttHost: kMqttHost,
+              mqttPort: kMqttPort,
+              siteId: kSiteId,
+              // mqttUsername: kMqttUsername,
+              // mqttPassword: kMqttPassword,
+            ),
 
-class _Home extends StatelessWidget {
-  const _Home({super.key});
-  @override
-  Widget build(BuildContext context) {
-    return RecognizeAndUnlockScreen(
-      backendBase: kBackendBase,
-      mqttHost: kMqttHost,
-      mqttPort: kMqttPort,
-      siteId: kSiteId,
-      // mqttUsername: 'tablet-site-001', // fill if broker has auth
-      // mqttPassword: 'STRONG_PASS',
+        // Single Enroll screen (does form + capture)
+        EnrollScreen.route: (_) => EnrollScreen(
+              baseUrl: kBackendBase,
+              userId: '', // prefill; editable on Step 1
+              siteId: kSiteId, // optional: filter lockers by site
+              minShots: 3,
+              maxShots: 10,
+            ),
+
+        UserManagementScreen.route: (_) => UserManagementScreen(
+              baseUrl: kBackendBase,
+              siteId: kSiteId,
+            ),
+
+        // If/when you add the user management screen, uncomment:
+        // UserManagementScreen.route: (_) => UserManagementScreen(
+        //       baseUrl: kBackendBase,
+        //       siteId: kSiteId,
+        //     ),
+      },
     );
   }
 }

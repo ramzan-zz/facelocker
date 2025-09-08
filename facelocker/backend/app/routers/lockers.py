@@ -1,22 +1,28 @@
-﻿from fastapi import APIRouter, Depends, HTTPException, Query
+﻿# backend/app/routers/lockers.py
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
-from typing import List
-from pydantic import BaseModel
+from typing import List, Optional
 
 from ..db import get_db
 from ..models import Locker, Assignment
-from ..schemas import LockerOut, LockerCreate  # keep your existing schema
+from ..schemas import LockerOut, LockerCreate
 
 router = APIRouter(prefix="/api/lockers", tags=["lockers"])
 
 
-# ---------- List all lockers ----------
+# ---------- List all lockers (optional site filter) ----------
 @router.get("/", response_model=List[LockerOut])
-def list_lockers(db: Session = Depends(get_db)):
-    return db.query(Locker).order_by(Locker.locker_id.asc()).all()
+def list_lockers(
+    site_id: Optional[str] = Query(None, description="Optional site filter"),
+    db: Session = Depends(get_db),
+):
+    q = db.query(Locker)
+    if site_id:
+        q = q.filter(Locker.site_id == site_id)
+    return q.order_by(Locker.locker_id.asc()).all()
 
 
-# ---------- Create a locker (NO 'active' passed to model) ----------
+# ---------- Create a locker ----------
 @router.post("/", response_model=LockerOut, status_code=201)
 def create_locker(payload: LockerCreate, db: Session = Depends(get_db)):
     exists = db.query(Locker).filter(Locker.locker_id == payload.locker_id).first()
@@ -35,27 +41,43 @@ def create_locker(payload: LockerCreate, db: Session = Depends(get_db)):
     return row
 
 
-# ---------- List free lockers (don’t assume Locker.active/Assignment.active exists) ----------
+# ---------- List free lockers ----------
 @router.get("/free", response_model=List[LockerOut])
-def list_free_lockers(db: Session = Depends(get_db)):
-    # If Assignment has an 'active' flag, use it; otherwise treat any assignment as taking the locker
-    try:
-        subq = (
-            db.query(Assignment.locker_id).filter(Assignment.active == True).subquery()
-        )
-    except Exception:
-        subq = db.query(Assignment.locker_id).subquery()
+def list_free_lockers(
+    site_id: Optional[str] = Query(None, description="Optional site filter"),
+    db: Session = Depends(get_db),
+):
+    """
+    If your Assignment model DOES NOT have an 'active'/'ended_at' column (your current schema),
+    the assignments table always reflects the *current* state (because we delete old rows on reassignment).
+    So a locker is 'occupied' iff it appears in Assignment at all.
 
-    rows = (
-        db.query(Locker)
-        .filter(~Locker.locker_id.in_(subq))
-        .order_by(Locker.locker_id.asc())
-        .all()
-    )
-    return rows
+    If you later add 'active' or 'ended_at', this query still works because we switch to filtering on 'active == True'.
+    """
+    # Branch depending on whether the model has an 'active' column.
+    has_active = hasattr(Assignment, "active")
+
+    if has_active:
+        occupied_subq = (
+            db.query(Assignment.locker_id)
+            .filter(Assignment.active == True)  # noqa: E712
+            .subquery()
+        )
+    else:
+        # No 'active' column → any row means currently occupied (since we delete old rows).
+        occupied_subq = db.query(Assignment.locker_id).subquery()
+
+    q = db.query(Locker).filter(~Locker.locker_id.in_(occupied_subq))
+    if site_id:
+        q = q.filter(Locker.site_id == site_id)
+
+    return q.order_by(Locker.locker_id.asc()).all()
 
 
 # ---------- Seed lockers 1..N ----------
+from pydantic import BaseModel
+
+
 class SeedRequest(BaseModel):
     total: int = 48
     per_controller: int = 16
@@ -100,7 +122,6 @@ def seed_lockers_json(payload: SeedRequest, db: Session = Depends(get_db)):
     )
 
 
-# Handy GET variant so you can seed without JSON quoting issues in PowerShell
 @router.get("/seed", response_model=List[LockerOut])
 def seed_lockers_query(
     total: int = Query(48, ge=1),
