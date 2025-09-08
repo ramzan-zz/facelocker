@@ -1,14 +1,15 @@
+from pathlib import Path as PathlibPath
 import os
 import sqlite3
 from contextlib import contextmanager
 from pathlib import Path
-from typing import List, Tuple, Optional
+from typing import List, Tuple, Optional, Dict, Any
 import numpy as np
 import io
-import json
+
 
 DB_PATH = os.getenv("DB_PATH", "/app/data/facelocker.db")
-FACES_DIR = Path(os.getenv("FACES_DIR", "/app/data/faces")).resolve()
+FACES_DIR = PathlibPath(os.getenv("FACES_DIR", "/app/data/faces")).resolve()
 FACES_DIR.mkdir(parents=True, exist_ok=True)
 
 
@@ -59,6 +60,25 @@ def _bytes_to_np(b: bytes) -> np.ndarray:
     return np.load(buf)
 
 
+def _safe_unlink(p: PathlibPath) -> None:  # type annotation
+    try:
+        p.unlink(missing_ok=True)
+    except Exception:
+        pass
+
+
+def _image_url(user_id: str, face_id: str) -> str:
+    """
+    Our API serves static files under /static.
+    We save images at: FACES_DIR / user_id / {face_id}.jpg
+    So the public URL is typically: /static/faces/{user_id}/{face_id}.jpg
+    """
+    return f"/static/faces/{user_id}/{face_id}.jpg"
+
+
+# --- CRUD ---
+
+
 def add_face(
     face_id: str,
     user_id: str,
@@ -74,36 +94,71 @@ def add_face(
 
 
 def delete_face(face_id: str) -> int:
+    """
+    Delete a single face by ID; remove DB row and the image file if present.
+    Returns the number of rows deleted (0 or 1).
+    """
     with get_conn() as c:
+        # fetch image path first
+        cur = c.execute("SELECT image_path FROM faces WHERE face_id=?", (face_id,))
+        row = cur.fetchone()
+        if row:
+            img_path = Path(row[0])
+            _safe_unlink(img_path)
         cur = c.execute("DELETE FROM faces WHERE face_id=?", (face_id,))
         return cur.rowcount
 
 
-def list_faces(user_id: str | None = None):
+def delete_faces_by_user(user_id: str) -> tuple[int, list[str]]:
+    """
+    Delete all faces for a given user; remove DB rows and the image files.
+    Returns (count_deleted, deleted_face_ids)
+    """
+    deleted_ids: list[str] = []
+    with get_conn() as c:
+        cur = c.execute(
+            "SELECT face_id, image_path FROM faces WHERE user_id=?", (user_id,)
+        )
+        rows = cur.fetchall()
+        for fid, img in rows:
+            deleted_ids.append(fid)
+            _safe_unlink(PathlibPath(img))
+
+        c.execute("DELETE FROM faces WHERE user_id=?", (user_id,))
+    return (len(deleted_ids), deleted_ids)
+
+
+def list_faces(user_id: str | None = None) -> list[dict[str, Any]]:
     with get_conn() as c:
         if user_id:
             cur = c.execute(
-                "SELECT face_id,user_id,image_path,quality,created_at FROM faces WHERE user_id=? ORDER BY created_at DESC",
+                "SELECT face_id,user_id,image_path,quality,created_at "
+                "FROM faces WHERE user_id=? ORDER BY created_at DESC",
                 (user_id,),
             )
         else:
             cur = c.execute(
-                "SELECT face_id,user_id,image_path,quality,created_at FROM faces ORDER BY created_at DESC"
+                "SELECT face_id,user_id,image_path,quality,created_at "
+                "FROM faces ORDER BY created_at DESC"
             )
         rows = cur.fetchall()
-        return [
-            {
-                "face_id": r[0],
-                "user_id": r[1],
-                "image_path": r[2],
-                "quality": r[3],
-                "created_at": r[4],
-            }
-            for r in rows
-        ]
+        out: list[dict[str, Any]] = []
+        for r in rows:
+            face_id, uid, img_path, quality, created_at = r
+            out.append(
+                {
+                    "face_id": face_id,
+                    "user_id": uid,
+                    "image_path": img_path,
+                    "image_url": _image_url(uid, face_id),  # <— added
+                    "quality": quality,
+                    "created_at": created_at,
+                }
+            )
+        return out
 
 
-def all_embeddings():
+def all_embeddings() -> list[tuple[str, str, np.ndarray]]:
     with get_conn() as c:
         cur = c.execute("SELECT face_id,user_id,embedding FROM faces")
         rows = cur.fetchall()

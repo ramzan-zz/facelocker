@@ -17,6 +17,8 @@ dependencies:
   collection: ^1.18.0
   image_picker: ^1.1.2
   uuid: ^4.4.0
+  shared_preferences: ^2.2.3
+  crypto: ^3.0.3
 
 dev_dependencies:
   flutter_test:

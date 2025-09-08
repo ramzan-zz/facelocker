@@ -145,6 +145,56 @@ class _RecognizeAndUnlockScreenState extends State<RecognizeAndUnlockScreen> {
     setState(fn);
   }
 
+  Future<bool> _isUserActive(String userId) async {
+    try {
+      final r =
+          await http.get(Uri.parse('${widget.backendBase}/api/users/$userId'));
+      if (r.statusCode == 200) {
+        final j = jsonDecode(r.body);
+        final v = _extractActiveFromUserJson(j);
+        if (v != null) return v;
+        // If the server returns a user but no status flag, fail closed.
+        return false;
+      }
+      if (r.statusCode == 404) return false; // deleted/nonexistent user
+    } catch (_) {}
+    // Network/parse errors → fail closed to prevent unauthorized unlock
+    return false;
+  }
+
+  bool? _extractActiveFromUserJson(dynamic m) {
+    Map<String, dynamic>? obj;
+    if (m is Map<String, dynamic>) {
+      obj = m;
+    } else if (m is List && m.isNotEmpty && m.first is Map<String, dynamic>) {
+      obj = m.first as Map<String, dynamic>;
+    }
+    if (obj == null) return null;
+
+    final activeLike = obj['active'] ?? obj['is_active'] ?? obj['enabled'];
+    if (activeLike is bool) return activeLike;
+    if (activeLike is num) return activeLike != 0;
+    if (activeLike is String) {
+      final s = activeLike.toLowerCase().trim();
+      if (['false', '0', 'no', 'disabled', 'inactive'].contains(s))
+        return false;
+      if (['true', '1', 'yes', 'enabled', 'active'].contains(s)) return true;
+    }
+
+    final status = (obj['status'] ?? obj['user_status'] ?? obj['state'])
+        ?.toString()
+        .toLowerCase()
+        .trim();
+
+    if (status != null) {
+      // Important: check negatives first so "inactive" doesn't match "active".
+      if (status.contains('disabled') || status.contains('inactive'))
+        return false;
+      if (status == 'active' || status.startsWith('active')) return true;
+    }
+    return null;
+  }
+
   // ───────────────────────── Lifecycle ─────────────────────────
   @override
   void initState() {
@@ -154,15 +204,23 @@ class _RecognizeAndUnlockScreenState extends State<RecognizeAndUnlockScreen> {
 
   @override
   void dispose() {
-    // Stop AF nudging first to avoid touching a torn-down controller
-    _afNudgeTimer?.cancel();
+    // Block all future UI updates immediately.
+    _navigatingAway = true;
 
+    // Stop timers first.
+    _afNudgeTimer?.cancel();
     _ackTimeout?.cancel();
     _successTimer?.cancel();
+
+    // Prevent MQTT callbacks from touching UI during teardown.
+    if (_client != null) {
+      _client!.onConnected = null;
+      _client!.onDisconnected = null;
+    }
     _sub?.cancel();
     _client?.disconnect();
 
-    // Null out controller before disposing to avoid UI deref
+    // Tear down camera last.
     _camOpened = false;
     final cam = _cam;
     _cam = null;
@@ -193,36 +251,36 @@ class _RecognizeAndUnlockScreenState extends State<RecognizeAndUnlockScreen> {
 
       _cam = CameraController(
         front,
-        ResolutionPreset.medium, // faster AF/AE & capture
+        ResolutionPreset.medium,
         enableAudio: false,
         imageFormatGroup: ImageFormatGroup.jpeg,
       );
       _camInit = _cam!.initialize();
       await _camInit;
-      _camOpened = true; // controller is ready and alive
+      _camOpened = true;
 
-      // Reset any residual zoom
       try {
         await _cam!.setZoomLevel(1.0);
       } catch (_) {}
 
-      // Start AF/AE nudging ASAP
       await _startAFNudge();
 
-      if (!mounted) return;
+      if (!mounted || _navigatingAway) return;
       _safeSet(() {
         _phase = UnlockPhase.warmingUp;
         _status = _afLikelySupported ? 'Focusing…' : 'Preparing…';
       });
 
-      // Only wait if AF likely works
       if (_afLikelySupported) {
         await Future.delayed(const Duration(milliseconds: 600));
       }
 
+      // ✅ Re-check after the delay to avoid calling setState on a disposed widget
+      if (!mounted || _navigatingAway) return;
+
       await _recognizeWithRetries();
     } catch (e) {
-      if (!mounted) return;
+      if (!mounted || _navigatingAway) return;
       _safeSet(() {
         _phase = UnlockPhase.error;
         _errorText = 'Camera error: $e';
@@ -308,7 +366,16 @@ class _RecognizeAndUnlockScreenState extends State<RecognizeAndUnlockScreen> {
     _recognizedUserId = userId;
     _recognizedDisplayName = await _resolveUserDisplayName(best, userId);
 
-    // Resolve locker
+    // ── Access control first (fail closed if disabled/unverifiable)
+    _safeSet(() {
+      _status = 'Checking access…';
+    });
+    final isActive = await _isUserActive(userId);
+    if (!isActive) {
+      throw Exception('Access denied: this user is disabled.');
+    }
+
+    // ── Now resolve locker (only for active users)
     _safeSet(() {
       _phase = UnlockPhase.resolvingLocker;
       _status =
@@ -378,8 +445,14 @@ class _RecognizeAndUnlockScreenState extends State<RecognizeAndUnlockScreen> {
     c.keepAlivePeriod = 15;
     c.autoReconnect = true;
 
-    c.onConnected = () => _safeSet(() => _status = 'MQTT connected');
-    c.onDisconnected = () => _safeSet(() => _status = 'MQTT disconnected');
+    c.onConnected = () {
+      if (!mounted || _navigatingAway) return;
+      _safeSet(() => _status = 'MQTT connected');
+    };
+    c.onDisconnected = () {
+      if (!mounted || _navigatingAway) return;
+      _safeSet(() => _status = 'MQTT disconnected');
+    };
 
     final connMess = MqttConnectMessage()
         .withClientIdentifier(cid)
@@ -469,37 +542,50 @@ class _RecognizeAndUnlockScreenState extends State<RecognizeAndUnlockScreen> {
   }
 
   // ───────────────────────── Name/Locker resolution ─────────────────────────
+  // Replace _resolveUserDisplayName and _extractNameFromUserJson with these:
+
   Future<String> _resolveUserDisplayName(
-      Map<String, dynamic> best, String userId) async {
-    // 1) From "best"
-    String? fromBest() {
-      for (final k in [
-        'name',
-        'display_name',
-        'full_name',
-        'username',
-        'first_name',
-        'last_name'
-      ]) {
-        final v = best[k];
-        if (v is String && v.trim().isNotEmpty) return v;
-      }
-      final f = (best['first_name'] ?? '').toString().trim();
-      final l = (best['last_name'] ?? '').toString().trim();
-      final full = '$f $l'.trim();
-      return full.isNotEmpty ? full : null;
+    Map<String, dynamic> best,
+    String userId,
+  ) async {
+    // 1) Try to get a human-friendly name straight from the recognize payload
+    final fromBest = _pickName(best);
+    if (fromBest != null && fromBest.trim().isNotEmpty) {
+      return fromBest.trim();
     }
 
-    final direct = fromBest();
-    if (direct != null) return direct;
+    // 2) Try your backend (robust to either object or list responses)
+    //    a) /api/users/{user_id}
+    try {
+      final r =
+          await http.get(Uri.parse('${widget.backendBase}/api/users/$userId'));
+      if (r.statusCode == 200) {
+        final j = jsonDecode(r.body);
+        final n = _pickName(j);
+        if (n != null && n.trim().isNotEmpty) return n.trim();
+      }
+    } catch (_) {}
 
-    // (Your backend doesn't expose GET /api/users/{id} or ?user_id=. These calls
-    // will 404 and be ignored, so we just fall back to userId.)
+    //    b) /api/users?user_id={user_id}
+    try {
+      final r = await http
+          .get(Uri.parse('${widget.backendBase}/api/users?user_id=$userId'));
+      if (r.statusCode == 200) {
+        final j = jsonDecode(r.body);
+        final n = _pickName(j);
+        if (n != null && n.trim().isNotEmpty) return n.trim();
+      }
+    } catch (_) {}
+
+    // 3) Last resort: show the raw user_id
     return userId;
   }
 
-  String? _extractNameFromUserJson(dynamic m) {
+  /// Picks the best display name from a dynamic JSON shape.
+  /// Priority: username > name > display_name > full_name > "first last".
+  String? _pickName(dynamic m) {
     Map<String, dynamic>? obj;
+
     if (m is Map<String, dynamic>) {
       obj = m;
     } else if (m is List && m.isNotEmpty && m.first is Map<String, dynamic>) {
@@ -507,13 +593,15 @@ class _RecognizeAndUnlockScreenState extends State<RecognizeAndUnlockScreen> {
     }
     if (obj == null) return null;
 
-    for (final k in ['name', 'display_name', 'full_name', 'username']) {
+    // Prefer `username` first (your request), then common name fields.
+    for (final k in ['username', 'name', 'display_name', 'full_name']) {
       final v = obj[k];
       if (v is String && v.trim().isNotEmpty) return v;
     }
+
     final f = (obj['first_name'] ?? '').toString().trim();
     final l = (obj['last_name'] ?? '').toString().trim();
-    final full = '$f $l'.trim();
+    final full = '$f ${l.isEmpty ? '' : l}'.trim();
     return full.isNotEmpty ? full : null;
   }
 
@@ -885,6 +973,13 @@ class _ErrorCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final lower = message.toLowerCase();
+    final computedTitle = lower.contains('access denied')
+        ? 'Access denied'
+        : lower.contains('no active locker')
+            ? 'No active locker'
+            : 'Face not recognized';
+
     return Card(
       color: Colors.red.shade600.withOpacity(0.95),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
@@ -893,16 +988,17 @@ class _ErrorCard extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Row(children: const [
-              Icon(Icons.error_outline, color: Colors.white, size: 24),
-              SizedBox(width: 8),
+            Row(children: [
+              const Icon(Icons.error_outline, color: Colors.white, size: 24),
+              const SizedBox(width: 8),
               Expanded(
                 child: Text(
-                  'Face not recognized',
-                  style: TextStyle(
-                      color: Colors.white,
-                      fontSize: 18,
-                      fontWeight: FontWeight.w800),
+                  computedTitle,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 18,
+                    fontWeight: FontWeight.w800,
+                  ),
                 ),
               ),
             ]),

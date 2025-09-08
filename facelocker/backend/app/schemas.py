@@ -1,5 +1,5 @@
 ﻿# backend/app/schemas.py
-from typing import Optional, List
+from typing import Optional, List, Literal
 from datetime import datetime
 
 try:
@@ -18,11 +18,20 @@ except Exception:
             orm_mode = True
 
 
+# ====== Read models (responses) ======
+
+
 class UserOut(ORMModel):
     id: int
     user_id: str
     name: Optional[str] = None
     status: Optional[str] = "active"
+
+
+# ✅ Add this:
+class UserUpdate(ORMModel):
+    name: Optional[str] = None
+    status: Optional[str] = None  # e.g. "active" | "disabled"
 
 
 class LockerOut(ORMModel):
@@ -40,7 +49,7 @@ class AssignmentOut(ORMModel):
 
 class EmbeddingOut(ORMModel):
     user_id: str
-    vec: List[float]  # JSON list parsed to Python list in the router
+    vec: List[float]  # router must json-decode DB text to list[float]
 
 
 class EventOut(ORMModel):
@@ -58,7 +67,7 @@ class SyncPayload(BaseModel):
     embeddings: List[EmbeddingOut]
 
 
-# ----- Create payloads (request bodies) -----
+# ====== Write models (requests) ======
 
 
 # Create a locker
@@ -67,26 +76,33 @@ class LockerCreate(BaseModel):
     site_id: Optional[str] = None
     channel: int
     notes: Optional[str] = None
-    active: Optional[bool] = True  # if your Locker model has this column
+    # NOTE: Your Locker model has no "active" column.
+    # If you later add it, you can reintroduce a field here.
 
 
 # Seed lockers (1..N, 16 per controller by default)
 class LockerSeedRequest(BaseModel):
-    total: int = 48  # total lockers to create
-    per_controller: int = 16  # lockers per ESP/controller
+    total: int = 48
+    per_controller: int = 16
     site_id: str = "site-001"
-    controller_prefix: str = "esp"  # used only to annotate notes
+    controller_prefix: str = "esp"
 
 
-# (optional) Create a user
+# Create a user
 class UserCreate(BaseModel):
     user_id: str
     name: Optional[str] = None
-    status: Optional[str] = "active"
+    status: Optional[Literal["active", "disabled"]] = "active"
 
 
-# (optional) Create an assignment
+# ✅ NEW: Update a user (partial PATCH)
+class UserUpdate(BaseModel):
+    name: Optional[str] = None
+    status: Optional[Literal["active", "disabled"]] = None
+
+
+# Create (or reassign) an assignment
 class AssignmentCreate(BaseModel):
     user_id: str
     locker_id: int
-    active: Optional[bool] = True
+    # If your Assignment table later adds 'active'/'ended_at', you can extend here.

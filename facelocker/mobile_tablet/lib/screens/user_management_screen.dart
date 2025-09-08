@@ -359,20 +359,30 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
     }
   }
 
-  /// Tries PATCH /api/users/{id} with {"status": "..."}.
-  /// If not implemented on backend, shows a snackbar and returns false.
+  // PATCH status using user_id in the path, with a fallback to /enable|/disable
   Future<bool> _patchUserStatus(_UserItem u, String status) async {
+    final userIdPath = Uri.encodeComponent(u.userId);
     try {
+      // Preferred: PATCH /api/users/{user_id}
       final r = await http.patch(
-        Uri.parse('${widget.baseUrl}/api/users/${u.id}'),
+        Uri.parse('${widget.baseUrl}/api/users/$userIdPath'),
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({'status': status}),
       );
       if (r.statusCode >= 200 && r.statusCode < 300) return true;
+
+      // Fallback: POST /api/users/{user_id}/enable or /disable
       if (r.statusCode == 404 || r.statusCode == 405) {
-        _snack('PATCH /api/users/{id} not available on backend.');
+        final action =
+            (status.toLowerCase() == 'disabled') ? 'disable' : 'enable';
+        final r2 = await http.post(
+          Uri.parse('${widget.baseUrl}/api/users/$userIdPath/$action'),
+        );
+        if (r2.statusCode >= 200 && r2.statusCode < 300) return true;
+        _snack('Status update failed: ${r2.statusCode} ${r2.body}');
         return false;
       }
+
       _snack('Status update failed: ${r.statusCode} ${r.body}');
       return false;
     } catch (e) {
@@ -381,6 +391,7 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
     }
   }
 
+// DELETE user using user_id in the path (with gentle fallback if your backend also supports numeric id)
   Future<void> _deleteUser(_UserItem u) async {
     final confirm = await showDialog<bool>(
       context: context,
@@ -400,19 +411,30 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
     );
     if (confirm != true) return;
 
+    final userIdPath = Uri.encodeComponent(u.userId);
+
+    Future<bool> _tryDelete(String path) async {
+      final r = await http.delete(Uri.parse('${widget.baseUrl}$path'));
+      if (r.statusCode >= 200 && r.statusCode < 300) return true;
+      if (r.statusCode == 404 || r.statusCode == 405)
+        return false; // try fallback
+      _snack('Delete failed: ${r.statusCode} ${r.body}');
+      return false;
+    }
+
     try {
-      final r =
-          await http.delete(Uri.parse('${widget.baseUrl}/api/users/${u.id}'));
-      if (r.statusCode >= 200 && r.statusCode < 300) {
+      // Preferred: DELETE /api/users/{user_id}
+      bool ok = await _tryDelete('/api/users/$userIdPath');
+      // Optional fallback: DELETE /api/users/{id} (only if you keep that route around)
+      if (!ok) ok = await _tryDelete('/api/users/${u.id}');
+      if (ok) {
         _snack('User deleted.');
         setState(() {
           _users.removeWhere((x) => x.userId == u.userId);
           _extras.remove(u.userId);
         });
-      } else if (r.statusCode == 404 || r.statusCode == 405) {
-        _snack('DELETE /api/users/{id} not available on backend.');
       } else {
-        _snack('Delete failed: ${r.statusCode} ${r.body}');
+        _snack('DELETE /api/users/{user_id} not available on backend.');
       }
     } catch (e) {
       _snack('Delete error: $e');

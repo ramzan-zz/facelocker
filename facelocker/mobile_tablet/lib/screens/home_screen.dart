@@ -1,7 +1,10 @@
 // lib/screens/home_screen.dart
 import 'package:flutter/material.dart';
 import '../config.dart'; // <- for kBackendBase
-import 'enroll_screen.dart'; // <- the screen we just built
+import '../widgets/admin_lock_action.dart';
+import '../security/admin_gate.dart';
+import 'enroll_screen.dart';
+import 'settings_screen.dart';
 
 class HomeScreen extends StatelessWidget {
   const HomeScreen({super.key});
@@ -13,6 +16,7 @@ class HomeScreen extends StatelessWidget {
     return Scaffold(
       appBar: AppBar(
         title: const Text('FaceLocker'),
+        actions: const [AdminLockAction()], // ← lock toggle
         centerTitle: true,
       ),
       body: Padding(
@@ -43,15 +47,22 @@ class HomeScreen extends StatelessWidget {
                   iconColor: color.onSecondaryContainer,
                   onTap: () => _openEnroll(context),
                 ),
-                // Add more cards later (Assignments, Events, Settings, etc.)
-                // inside GridView.count(children: [...])
                 _HomeCard(
                   icon: Icons.group_outlined,
                   title: 'Users',
                   subtitle: 'Assign lockers, faces & status',
                   color: color.tertiaryContainer,
                   iconColor: color.onTertiaryContainer,
-                  onTap: () => Navigator.pushNamed(context, '/users'),
+                  onTap: () => _openUsers(context),
+                ),
+                // New: Settings card (admin gated)
+                _HomeCard(
+                  icon: Icons.settings,
+                  title: 'Settings',
+                  subtitle: 'Admin mode & change PIN',
+                  color: color.surfaceContainerHighest,
+                  iconColor: color.onSurface,
+                  onTap: () => _openSettings(context),
                 ),
               ],
             );
@@ -62,13 +73,13 @@ class HomeScreen extends StatelessWidget {
   }
 
   Future<void> _openEnroll(BuildContext context) async {
+    // Admin gate first
+    final ok = await AdminGate.I.ensure(context);
+    if (!ok) return;
+
     final userId = await _promptUserId(context);
     if (userId == null || userId.trim().isEmpty) return;
 
-    // Navigate directly (no need to add a named route)
-    // Pass your backend base URL and the chosen userId.
-    // Ensure kBackendBase is defined in config.dart (same one used by unlock).
-    // Example: const kBackendBase = 'http://192.168.70.14:8000';
     // ignore: use_build_context_synchronously
     Navigator.push(
       context,
@@ -79,6 +90,20 @@ class HomeScreen extends StatelessWidget {
         ),
       ),
     );
+  }
+
+  Future<void> _openUsers(BuildContext context) async {
+    final ok = await AdminGate.I.ensure(context);
+    if (!ok) return;
+    if (!context.mounted) return;
+    Navigator.pushNamed(context, '/users');
+  }
+
+  Future<void> _openSettings(BuildContext context) async {
+    final ok = await AdminGate.I.ensure(context);
+    if (!ok) return;
+    if (!context.mounted) return;
+    Navigator.pushNamed(context, SettingsScreen.route);
   }
 
   Future<String?> _promptUserId(BuildContext context) async {

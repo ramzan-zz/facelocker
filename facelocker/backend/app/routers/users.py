@@ -1,11 +1,14 @@
 ﻿# backend/app/routers/users.py
-from fastapi import APIRouter, Depends, HTTPException, Path
+from fastapi import APIRouter, Depends, HTTPException, Path as FPath, Response
+
 from sqlalchemy.orm import Session
 from typing import List, Optional
 
 from ..db import get_db
 from ..models import User
 from ..schemas import UserOut, UserCreate, UserUpdate  # <- ensure these exist
+from ..face.db import delete_faces_by_user
+
 
 router = APIRouter(prefix="/api/users", tags=["users"])
 
@@ -17,7 +20,7 @@ def list_users(db: Session = Depends(get_db)):
 
 
 @router.get("/{user_id}", response_model=UserOut)
-def get_user(user_id: str = Path(...), db: Session = Depends(get_db)):
+def get_user(user_id: str = FPath(...), db: Session = Depends(get_db)):
     """Fetch a single user by public user_id."""
     row = db.query(User).filter(User.user_id == user_id).first()
     if not row:
@@ -50,9 +53,7 @@ def create_user(payload: UserCreate, db: Session = Depends(get_db)):
 
 @router.patch("/{user_id}", response_model=UserOut)
 def update_user(
-    user_id: str = Path(...),
-    payload: UserUpdate = None,
-    db: Session = Depends(get_db),
+    user_id: str = FPath(...), payload: UserUpdate = None, db: Session = Depends(get_db)
 ):
     """Partial update: name and/or status (active/disabled)."""
     row = db.query(User).filter(User.user_id == user_id).first()
@@ -77,15 +78,44 @@ def update_user(
     return row
 
 
-@router.delete("/{user_id}", status_code=204)
-def delete_user(user_id: str = Path(...), db: Session = Depends(get_db)):
-    """
-    Delete a user. Related rows are removed via FK ON DELETE CASCADE
-    (Embeddings, Assignments) if your DB enforces foreign keys.
-    """
+@router.post("/{user_id}/disable", response_model=UserOut)
+def disable_user(user_id: str, db: Session = Depends(get_db)):
     row = db.query(User).filter(User.user_id == user_id).first()
     if not row:
         raise HTTPException(status_code=404, detail="user_not_found")
+    if hasattr(User, "status"):
+        row.status = "disabled"
+        db.commit()
+        db.refresh(row)
+    return row
+
+
+@router.post("/{user_id}/enable", response_model=UserOut)
+def enable_user(user_id: str, db: Session = Depends(get_db)):
+    row = db.query(User).filter(User.user_id == user_id).first()
+    if not row:
+        raise HTTPException(status_code=404, detail="user_not_found")
+    if hasattr(User, "status"):
+        row.status = "active"
+        db.commit()
+        db.refresh(row)
+    return row
+
+
+@router.delete("/{user_id}", status_code=204)
+def delete_user(user_id: str = FPath(...), db: Session = Depends(get_db)):
+    row = db.query(User).filter(User.user_id == user_id).first()
+    if not row:
+        raise HTTPException(status_code=404, detail="user_not_found")
+
     db.delete(row)
     db.commit()
-    return None
+
+    # also remove all face rows + image files for this user
+    try:
+        delete_faces_by_user(user_id)
+    except Exception:
+        # don’t fail delete if file cleanup hiccups
+        pass
+
+    return Response(status_code=204)

@@ -1,7 +1,9 @@
 ﻿# backend/app/routers/lockers.py
-from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy.orm import Session
 from typing import List, Optional
+
+from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy import select
+from sqlalchemy.orm import Session
 
 from ..db import get_db
 from ..models import Locker, Assignment
@@ -47,30 +49,18 @@ def list_free_lockers(
     site_id: Optional[str] = Query(None, description="Optional site filter"),
     db: Session = Depends(get_db),
 ):
-    """
-    If your Assignment model DOES NOT have an 'active'/'ended_at' column (your current schema),
-    the assignments table always reflects the *current* state (because we delete old rows on reassignment).
-    So a locker is 'occupied' iff it appears in Assignment at all.
-
-    If you later add 'active' or 'ended_at', this query still works because we switch to filtering on 'active == True'.
-    """
-    # Branch depending on whether the model has an 'active' column.
+    # Prefer 'active == True' if that column exists; otherwise treat any assignment as occupied.
     has_active = hasattr(Assignment, "active")
-
     if has_active:
-        occupied_subq = (
-            db.query(Assignment.locker_id)
-            .filter(Assignment.active == True)  # noqa: E712
-            .subquery()
-        )
+        occupied = select(Assignment.locker_id).where(
+            Assignment.active == True
+        )  # noqa: E712
     else:
-        # No 'active' column → any row means currently occupied (since we delete old rows).
-        occupied_subq = db.query(Assignment.locker_id).subquery()
+        occupied = select(Assignment.locker_id)
 
-    q = db.query(Locker).filter(~Locker.locker_id.in_(occupied_subq))
+    q = db.query(Locker).filter(~Locker.locker_id.in_(occupied))
     if site_id:
         q = q.filter(Locker.site_id == site_id)
-
     return q.order_by(Locker.locker_id.asc()).all()
 
 
@@ -86,7 +76,11 @@ class SeedRequest(BaseModel):
 
 
 def _do_seed(
-    total: int, per_controller: int, site_id: str, controller_prefix: str, db: Session
+    total: int,
+    per_controller: int,
+    site_id: str,
+    controller_prefix: str,
+    db: Session,
 ):
     created_or_existing = []
     for i in range(1, total + 1):
