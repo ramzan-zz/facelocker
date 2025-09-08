@@ -1,7 +1,7 @@
-﻿# backend/app/routers/assignments.py (add to existing router)
+﻿# backend/app/routers/assignments.py (extend existing file)
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
-from typing import Optional
+from typing import Optional, List
 from pydantic import BaseModel
 from ..db import get_db
 from ..models import Assignment, User, Locker
@@ -39,4 +39,44 @@ def create_assignment(payload: AssignmentCreate, db: Session = Depends(get_db)):
     db.add(row)
     db.commit()
     db.refresh(row)
+    return row
+
+
+# ⬇️ NEW: list assignments (optionally filter by user and only-open)
+@router.get("/", response_model=List[AssignmentOut])
+def list_assignments(
+    user_id: Optional[str] = Query(None),
+    only_open: bool = Query(False),
+    db: Session = Depends(get_db),
+):
+    q = db.query(Assignment)
+    if user_id:
+        q = q.filter(Assignment.user_id == user_id)
+
+    if only_open:
+        if hasattr(Assignment, "ended_at"):
+            q = q.filter(Assignment.ended_at == None)  # noqa: E711
+        elif hasattr(Assignment, "active"):
+            q = q.filter(Assignment.active == True)  # noqa: E712
+
+    order_col = getattr(Assignment, "created_at", getattr(Assignment, "id"))
+    return q.order_by(order_col.desc()).all()
+
+
+# ⬇️ OPTIONAL: fetch the user's current/most-recent open assignment
+@router.get("/current", response_model=AssignmentOut)
+def get_current_assignment(
+    user_id: str = Query(...),
+    db: Session = Depends(get_db),
+):
+    q = db.query(Assignment).filter(Assignment.user_id == user_id)
+    if hasattr(Assignment, "ended_at"):
+        q = q.filter(Assignment.ended_at == None)  # noqa: E711
+    elif hasattr(Assignment, "active"):
+        q = q.filter(Assignment.active == True)  # noqa: E712
+
+    order_col = getattr(Assignment, "created_at", getattr(Assignment, "id"))
+    row = q.order_by(order_col.desc()).first()
+    if not row:
+        raise HTTPException(404, "assignment_not_found")
     return row

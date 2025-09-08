@@ -15,7 +15,7 @@ from .routers.faces import router as faces_router
 from .routers.recognize import router as recognize_router
 from .routers import assignments_resolver
 
-app = FastAPI(title="FaceLocker Backend")
+app = FastAPI(title="FaceLocker Backend")  # ← create app first
 
 app.add_middleware(
     CORSMiddleware,
@@ -33,7 +33,7 @@ app.mount("/static/faces", StaticFiles(directory=str(faces_dir)), name="faces")
 # Create DB tables
 Base.metadata.create_all(bind=engine)
 
-# Include all routers AFTER app is created
+# Include routers AFTER app is created
 app.include_router(users.router)
 app.include_router(lockers.router)
 app.include_router(assignments.router)
