@@ -21,8 +21,13 @@ inline int RELAY_OFF() { return RELAY_ACTIVE_LOW ? HIGH : LOW; }
 #define SITE_ID "site-001"
 #define DEVICE_ID "esp32-01"
 
-// Map locker_id (1..16) -> ESP32 GPIO pins (edit to match your wiring)
+#ifndef LOCKER_OFFSET
+#define LOCKER_OFFSET 0 // 0 for lockers 1-16, 16 for 17-32, etc.
+#endif
+
 const int NUM_CHANNELS = 16;
+const int MAX_LOCKER_ID = 48;
+// Map local channel (1..NUM_CHANNELS) -> ESP32 GPIO pins (edit to match your wiring)
 const int RELAY_PINS[NUM_CHANNELS + 1] = {
     /*0*/ -1,
     /*1*/ 14, /*2*/ 27, /*3*/ 26, /*4*/ 25,
@@ -60,15 +65,22 @@ void publishTele(bool online, bool retained)
 // ======== RELAY ========
 void pulseRelay(int lockerId, int durationMs)
 {
-    if (lockerId < 1 || lockerId > NUM_CHANNELS)
+    if (lockerId < 1 || lockerId > MAX_LOCKER_ID)
     {
         LOGF("[RELAY] invalid lockerId=%d\n", lockerId);
         return;
     }
-    int pin = RELAY_PINS[lockerId];
+    if (lockerId <= LOCKER_OFFSET || lockerId > LOCKER_OFFSET + NUM_CHANNELS)
+    {
+        LOGF("[RELAY] lockerId=%d not assigned to this controller\n", lockerId);
+        return;
+    }
+
+    int localId = lockerId - LOCKER_OFFSET;
+    int pin = RELAY_PINS[localId];
     if (pin < 0)
     {
-        LOGF("[RELAY] lockerId=%d has no pin mapping\n", lockerId);
+        LOGF("[RELAY] lockerId=%d (local=%d) has no pin mapping\n", lockerId, localId);
         return;
     }
 
